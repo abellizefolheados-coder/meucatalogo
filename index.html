@@ -1,0 +1,414 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  ShoppingCart, Settings, Plus, Minus, Trash2, Download, MessageCircle, Package, ChevronLeft, CreditCard, Banknote, Store, CheckCircle2, Image as ImageIcon, Upload, Edit3, Tag, Save, Lock
+} from 'lucide-react';
+
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'abella-joias-v5';
+
+// SENHA MESTRE PARA O PAINEL
+const ADMIN_PASSWORD = "123"; 
+
+export default function App() {
+  /* ===================== ESTADOS ===================== */
+  const [view, setView] = useState('catalog'); 
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+  const [isPublicMode, setIsPublicMode] = useState(false);
+  const [products, setProducts] = useState([]);
+  const [cart, setCart] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [lastOrder, setLastOrder] = useState(null);
+  const [customer, setCustomer] = useState({ name: '', phone: '+55' });
+  const [paymentMethod, setPaymentMethod] = useState('pix');
+  const [installments, setInstallments] = useState(1);
+  const [storeConfig, setStoreConfig] = useState({
+    name: 'Abella Joias',
+    whatsapp: '5511999999999',
+    pixDiscount: 0.10,
+    maxInstallments: 6
+  });
+  const [newProduct, setNewProduct] = useState({ sku: '', name: '', price: '', image: '', stock: 0 });
+  const [editingProduct, setEditingProduct] = useState(null);
+
+  /* ===================== INICIALIZAÇÃO ===================== */
+  useEffect(() => {
+    // Verificar se a URL contém o parâmetro de modo público
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('mode') === 'public') {
+      setIsPublicMode(true);
+    }
+
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+    script.async = true;
+    document.body.appendChild(script);
+
+    const savedProducts = JSON.parse(localStorage.getItem('products') || '[]');
+    const savedOrders = JSON.parse(localStorage.getItem('orders') || '[]');
+    const savedConfig = JSON.parse(localStorage.getItem('storeConfig') || 'null');
+
+    if (savedProducts.length) setProducts(savedProducts);
+    else {
+      const initial = [
+        { id: 1, sku: 'AJ-001', name: 'Anel Luxo Cravejado', price: 199.9, image: '', stock: 10 },
+        { id: 2, sku: 'AJ-002', name: 'Colar Elegance Ouro', price: 350.0, image: '', stock: 5 }
+      ];
+      setProducts(initial);
+    }
+    if (savedOrders.length) setOrders(savedOrders);
+    if (savedConfig) setStoreConfig(savedConfig);
+  }, []);
+
+  /* ===================== LÓGICA DE ACESSO ===================== */
+  const handleAdminAccess = () => {
+    if (isPublicMode) return; // Bloqueio total no modo público
+
+    if (isAdminAuthenticated) {
+      setView('admin');
+      return;
+    }
+
+    const pass = prompt("Digite a senha de administrador:");
+    if (pass === ADMIN_PASSWORD) {
+      setIsAdminAuthenticated(true);
+      setView('admin');
+    } else if (pass !== null) {
+      alert("Senha incorreta!");
+    }
+  };
+
+  /* ===================== UTILITÁRIOS ===================== */
+  const formatCurrency = v => Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  
+  const subtotal = useMemo(() => cart.reduce((a, i) => a + (Number(i.price) * i.qty), 0), [cart]);
+  const discount = useMemo(() => paymentMethod === 'pix' ? subtotal * storeConfig.pixDiscount : 0, [paymentMethod, subtotal, storeConfig.pixDiscount]);
+  const total = useMemo(() => subtotal - discount, [subtotal, discount]);
+
+  const removeItem = (id) => {
+    setCart(prev => prev.filter(item => item.id !== id));
+  };
+
+  /* ===================== LÓGICA DE PRODUTOS ===================== */
+  const handleImageUpload = (e, isEdit = false) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (isEdit) setEditingProduct({ ...editingProduct, image: reader.result });
+        else setNewProduct({ ...newProduct, image: reader.result });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const addProduct = e => {
+    e.preventDefault();
+    const updated = [...products, { ...newProduct, id: Date.now(), price: Number(newProduct.price), stock: Number(newProduct.stock) }];
+    setProducts(updated);
+    localStorage.setItem('products', JSON.stringify(updated));
+    setNewProduct({ sku: '', name: '', price: '', image: '', stock: 0 });
+  };
+
+  const deleteProduct = (id) => {
+    if (confirm("Deseja realmente excluir?")) {
+      const updated = products.filter(p => p.id !== id);
+      setProducts(updated);
+      localStorage.setItem('products', JSON.stringify(updated));
+    }
+  };
+
+  const saveEdit = () => {
+    const updated = products.map(p => p.id === editingProduct.id ? { ...editingProduct, price: Number(editingProduct.price), stock: Number(editingProduct.stock) } : p);
+    setProducts(updated);
+    localStorage.setItem('products', JSON.stringify(updated));
+    setEditingProduct(null);
+  };
+
+  /* ===================== LÓGICA DE CONFIGURAÇÃO ===================== */
+  const saveConfig = (e) => {
+    e.preventDefault();
+    localStorage.setItem('storeConfig', JSON.stringify(storeConfig));
+    alert("Configurações salvas!");
+  };
+
+  /* ===================== LÓGICA DE VENDA ===================== */
+  const addToCart = product => {
+    if (product.stock <= 0) return;
+    setCart(prev => {
+      const exists = prev.find(p => p.id === product.id);
+      if (exists) return prev.map(p => p.id === product.id ? { ...p, qty: p.qty + 1 } : p);
+      return [...prev, { ...product, qty: 1 }];
+    });
+  };
+
+  const finalizeSale = () => {
+    if (!customer.name || customer.phone.length < 10) return alert("Preencha os dados do cliente corretamente.");
+    
+    const order = {
+      id: Math.floor(1000 + Math.random() * 9000),
+      date: new Date().toLocaleString('pt-BR'),
+      customer: { ...customer },
+      items: cart.map(i => ({ ...i })),
+      paymentMethod,
+      installments: paymentMethod === 'card' ? installments : 1,
+      subtotal, discount, total
+    };
+    const newOrders = [order, ...orders];
+    setOrders(newOrders);
+    localStorage.setItem('orders', JSON.stringify(newOrders));
+    
+    const updatedProducts = products.map(p => {
+      const item = cart.find(ci => ci.id === p.id);
+      return item ? { ...p, stock: p.stock - item.qty } : p;
+    });
+    setProducts(updatedProducts);
+    localStorage.setItem('products', JSON.stringify(updatedProducts));
+
+    setLastOrder(order);
+    setCart([]);
+    setCustomer({ name: '', phone: '+55' });
+    setView('confirmed');
+  };
+
+  const deleteOrder = (id) => {
+    if (confirm("Excluir venda?")) {
+      const updated = orders.filter(o => o.id !== id);
+      setOrders(updated);
+      localStorage.setItem('orders', JSON.stringify(updated));
+    }
+  };
+
+  const generatePdf = (order) => {
+    const element = document.getElementById(`print-receipt-${order.id}`);
+    const opt = {
+      margin: 0,
+      filename: `Recibo_${order.id}.pdf`,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+    window.html2pdf().from(element).set(opt).save();
+  };
+
+  const sendWhatsappToStore = order => {
+    const itemsList = order.items.map(i => `- ${i.qty}x ${i.name}`).join('%0A');
+    const msg = `*${storeConfig.name.toUpperCase()}*%0A%0A*NOVO PEDIDO:* ${order.id}%0A*Cliente:* ${order.customer.name}%0A%0A*Itens:*%0A${itemsList}%0A%0A*Total:* ${formatCurrency(order.total)}`;
+    window.open(`https://wa.me/${storeConfig.whatsapp}?text=${msg}`, '_blank');
+  };
+
+  const sendWhatsappToCustomer = order => {
+    const cleanPhone = order.customer.phone.replace(/\D/g, ''); 
+    const msg = `Olá, *${order.customer.name}*!%0A%0ASeu pedido na *${storeConfig.name}* foi confirmado.%0A*Total:* ${formatCurrency(order.total)}`;
+    window.open(`https://wa.me/${cleanPhone}?text=${msg}`, '_blank');
+  };
+
+  /* ===================== COMPONENTES VISUAIS ===================== */
+  const PriceDisplay = ({ price }) => {
+    const pixPrice = price * (1 - storeConfig.pixDiscount);
+    return (
+      <div className="flex flex-col gap-1.5 text-right">
+        <span className="text-xl font-light text-gray-900">{formatCurrency(price)}</span>
+        <div className="space-y-0.5 border-r-2 border-[#A68966] pr-3">
+          <div className="flex items-center justify-end gap-1.5">
+            <span className="text-sm font-semibold text-[#A68966]">{formatCurrency(pixPrice)}</span>
+            <span className="text-[9px] uppercase text-gray-400 font-sans">no pix</span>
+          </div>
+          <p className="text-[9px] text-gray-500 uppercase tracking-widest font-sans">
+            ou {storeConfig.maxInstallments}x de {formatCurrency(price/storeConfig.maxInstallments)}
+          </p>
+        </div>
+      </div>
+    );
+  };
+
+  const PrintLayout = ({ order }) => (
+    <div id={`print-receipt-${order.id}`} style={{ width: '210mm', minHeight: '296mm', padding: '20mm', backgroundColor: 'white' }}>
+        <h1 style={{ textAlign: 'center', letterSpacing: '8px', textTransform: 'uppercase' }}>{storeConfig.name}</h1>
+        <hr style={{ margin: '20px 0' }} />
+        <p><strong>Cliente:</strong> {order.customer.name}</p>
+        <p><strong>Data:</strong> {order.date}</p>
+        <table style={{ width: '100%', marginTop: '20px', borderCollapse: 'collapse' }}>
+            <thead><tr style={{ textAlign: 'left', borderBottom: '1px solid #000' }}><th>Item</th><th>Qtd</th><th>Total</th></tr></thead>
+            <tbody>
+                {order.items.map((i, idx) => (
+                    <tr key={idx}><td>{i.name}</td><td>{i.qty}</td><td>{formatCurrency(i.price * i.qty)}</td></tr>
+                ))}
+            </tbody>
+        </table>
+        <div style={{ textAlign: 'right', marginTop: '30px', fontSize: '20px' }}><strong>TOTAL: {formatCurrency(order.total)}</strong></div>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-[#FDFBF7] text-[#2D2926] font-serif pb-24">
+      <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-[#E5DACE]/50 px-6 py-5 flex justify-between items-center">
+        {!isPublicMode ? (
+          <button onClick={handleAdminAccess} className="p-2 text-[#A68966]">
+            {isAdminAuthenticated ? <Settings size={20} /> : <Lock size={20} strokeWidth={1.5} />}
+          </button>
+        ) : (
+          <div className="w-10"></div> /* Espaçador para manter o logo centralizado */
+        )}
+        
+        <div className="flex flex-col items-center" onClick={() => setView('catalog')}>
+          <h1 className="text-lg tracking-[0.5em] uppercase font-light cursor-pointer">{storeConfig.name}</h1>
+          <div className="h-[1px] w-8 bg-[#A68966] mt-1"></div>
+        </div>
+        
+        <button onClick={() => setView('cart')} className="relative text-[#A68966] p-2">
+          <ShoppingCart size={20} strokeWidth={1.5} />
+          {cart.length > 0 && <span className="absolute -top-1 -right-1 bg-[#A68966] text-white text-[8px] rounded-full w-4 h-4 flex items-center justify-center font-sans font-bold">{cart.length}</span>}
+        </button>
+      </header>
+
+      <main className="max-w-xl mx-auto p-4 md:p-8 font-sans">
+        {view === 'catalog' && (
+          <div className="grid gap-14 font-serif">
+            {products.map(p => (
+              <div key={p.id} className="group">
+                <div className="aspect-[4/5] bg-[#F5F2EE] relative flex items-center justify-center overflow-hidden mb-6 shadow-sm">
+                  {p.stock <= 0 && <div className="absolute inset-0 bg-white/80 z-10 flex items-center justify-center"><span className="border border-red-200 text-red-400 py-2 px-6 text-[10px] uppercase tracking-widest">Esgotado</span></div>}
+                  {p.image ? <img src={p.image} className="w-full h-full object-cover" /> : <ImageIcon size={64} className="opacity-10 text-[#A68966]" />}
+                </div>
+                <div className="space-y-6">
+                  <div className="flex justify-between items-start border-b border-[#F5F2EE] pb-4">
+                    <div className="space-y-1">
+                      <p className="text-[9px] text-[#A68966] uppercase tracking-widest font-bold font-sans">{p.sku || 'REF-UNIQ'}</p>
+                      <h3 className="font-light text-2xl text-gray-900 leading-tight">{p.name}</h3>
+                    </div>
+                    <PriceDisplay price={p.price} />
+                  </div>
+                  <button disabled={p.stock <= 0} onClick={() => addToCart(p)} className="w-full py-5 bg-[#2D2926] text-white text-[11px] uppercase font-bold tracking-[0.3em] font-sans">Adicionar à sacola</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {view === 'cart' && (
+          <div className="space-y-8">
+             <div className="flex items-center gap-4 border-b border-[#F5F2EE] pb-6 font-serif">
+              <button onClick={() => setView('catalog')} className="text-[#A68966]"><ChevronLeft size={24}/></button>
+              <h2 className="text-2xl italic font-light">Sua Sacola</h2>
+            </div>
+            {cart.length === 0 ? <p className="text-center py-20 text-gray-400 italic">Sacola vazia</p> : (
+              <>
+                <div className="space-y-4">
+                  {cart.map(i => (
+                    <div key={i.id} className="bg-white p-4 border border-[#F5F2EE] flex items-center gap-5">
+                      <div className="w-16 h-20 bg-[#F5F2EE] shrink-0">{i.image && <img src={i.image} className="w-full h-full object-cover" />}</div>
+                      <div className="flex-1">
+                        <p className="text-[11px] font-bold uppercase">{i.name}</p>
+                        <p className="text-[12px] text-gray-500">{i.qty}x {formatCurrency(i.price)}</p>
+                      </div>
+                      <button onClick={() => removeItem(i.id)} className="text-red-300 p-2"><Trash2 size={16}/></button>
+                    </div>
+                  ))}
+                </div>
+                <div className="bg-white p-6 border border-[#F5F2EE] space-y-4">
+                  <h4 className="text-[10px] uppercase tracking-widest text-[#A68966] font-bold">Cliente</h4>
+                  <input className="w-full border-b py-3 text-sm outline-none" placeholder="Nome" value={customer.name} onChange={e => setCustomer({...customer, name: e.target.value})} />
+                  <input className="w-full border-b py-3 text-sm outline-none" placeholder="WhatsApp" value={customer.phone} onChange={e => setCustomer({...customer, phone: e.target.value})} />
+                </div>
+                <div className="bg-[#2D2926] text-white p-8 space-y-4 font-serif">
+                  <div className="flex justify-between text-2xl italic"><span>Total</span><span>{formatCurrency(total)}</span></div>
+                </div>
+                <button onClick={finalizeSale} className="w-full bg-[#A68966] text-white py-6 uppercase font-bold tracking-[0.4em]">Finalizar Venda</button>
+              </>
+            )}
+          </div>
+        )}
+
+        {view === 'confirmed' && lastOrder && (
+          <div className="text-center py-20 space-y-10 font-serif">
+            <CheckCircle2 size={80} className="mx-auto text-green-500" strokeWidth={1} />
+            <h2 className="text-3xl italic font-light">Pedido Confirmado!</h2>
+            <button onClick={() => sendWhatsappToStore(lastOrder)} className="w-full bg-[#25D366] text-white py-5 flex items-center justify-center gap-3 text-[10px] uppercase font-bold tracking-widest shadow-md">
+              <MessageCircle size={18}/> Notificar Loja via WhatsApp
+            </button>
+            <button onClick={() => setView('catalog')} className="text-[#A68966] uppercase text-[9px] font-bold tracking-widest mt-6">Voltar ao Catálogo</button>
+          </div>
+        )}
+
+        {view === 'admin' && !isPublicMode && isAdminAuthenticated && (
+          <div className="space-y-12 pb-24 font-sans">
+             <div className="flex items-center justify-between border-b pb-6 font-serif">
+                <button onClick={() => setView('catalog')} className="text-[#A68966]"><ChevronLeft size={24}/></button>
+                <h2 className="text-2xl italic font-light">Painel</h2>
+                <button onClick={() => { setIsAdminAuthenticated(false); setView('catalog'); }} className="text-red-400 text-[10px] font-bold">Sair</button>
+             </div>
+             
+             {/* Configuração Simples */}
+             <section className="bg-white p-6 border space-y-4">
+                <h3 className="text-[10px] font-bold uppercase tracking-widest text-[#A68966]">Marca & Contato</h3>
+                <input className="w-full border-b py-2 text-sm" placeholder="Nome da Loja" value={storeConfig.name} onChange={e => setStoreConfig({...storeConfig, name: e.target.value})} />
+                <input className="w-full border-b py-2 text-sm" placeholder="WhatsApp Loja" value={storeConfig.whatsapp} onChange={e => setStoreConfig({...storeConfig, whatsapp: e.target.value})} />
+                <button onClick={saveConfig} className="w-full bg-[#A68966] text-white py-3 text-[10px] uppercase font-bold tracking-widest">Salvar</button>
+             </section>
+
+             {/* Cadastro */}
+             <section className="bg-white p-6 border space-y-4">
+                <h3 className="text-[10px] font-bold uppercase tracking-widest text-[#A68966]">Novo Produto</h3>
+                <div className="h-32 bg-gray-50 border-2 border-dashed flex items-center justify-center relative">
+                    {newProduct.image ? <img src={newProduct.image} className="h-full object-contain" /> : <Upload className="text-gray-300" />}
+                    <input type="file" className="absolute inset-0 opacity-0" onChange={handleImageUpload} />
+                </div>
+                <input className="w-full border-b py-2 text-sm" placeholder="Nome" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} />
+                <input className="w-full border-b py-2 text-sm" placeholder="Preço" type="number" value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: e.target.value})} />
+                <input className="w-full border-b py-2 text-sm" placeholder="Estoque" type="number" value={newProduct.stock} onChange={e => setNewProduct({...newProduct, stock: e.target.value})} />
+                <button onClick={addProduct} className="w-full bg-black text-white py-3 text-[10px] font-bold uppercase">Cadastrar</button>
+             </section>
+
+             {/* Lista de Estoque */}
+             <section className="space-y-4">
+                <h3 className="text-[10px] font-bold uppercase text-gray-400 tracking-widest">Estoque Atual</h3>
+                {products.map(p => (
+                    <div key={p.id} className="flex items-center gap-4 bg-white p-3 border">
+                        <div className="w-10 h-10 bg-gray-100">{p.image && <img src={p.image} className="w-full h-full object-cover" />}</div>
+                        <div className="flex-1 text-[11px] font-bold uppercase">{p.name} - {formatCurrency(p.price)}</div>
+                        <button onClick={() => deleteProduct(p.id)} className="text-red-300"><Trash2 size={16}/></button>
+                    </div>
+                ))}
+             </section>
+
+             {/* Vendas */}
+             <section className="space-y-4">
+                <h3 className="text-[10px] font-bold uppercase text-[#A68966] tracking-widest italic text-lg">Vendas Realizadas</h3>
+                {orders.map(o => (
+                    <div key={o.id} className="bg-white p-4 border space-y-3">
+                        <div className="flex justify-between items-center">
+                            <span className="text-xs font-bold uppercase">{o.customer.name}</span>
+                            <button onClick={() => deleteOrder(o.id)}><Trash2 size={14} className="text-red-200"/></button>
+                        </div>
+                        <div className="flex gap-2">
+                            <button onClick={() => generatePdf(o)} className="flex-1 py-2 border text-[9px] font-bold uppercase text-[#A68966]">PDF</button>
+                            <button onClick={() => sendWhatsappToCustomer(o)} className="flex-1 py-2 border text-[9px] font-bold uppercase text-green-500">Enviar WhatsApp</button>
+                        </div>
+                    </div>
+                ))}
+             </section>
+          </div>
+        )}
+      </main>
+
+      {/* FOOTER - OCULTO NO MODO PÚBLICO */}
+      {!isPublicMode && (
+        <footer className="fixed bottom-0 left-0 right-0 bg-white border-t py-4 flex justify-around items-center z-40 shadow-sm">
+          <button onClick={() => setView('catalog')} className={`flex flex-col items-center gap-1 ${view === 'catalog' ? 'text-[#A68966]' : 'text-gray-300'}`}>
+            <Store size={22} /><span className="text-[8px] uppercase font-bold tracking-widest">Loja</span>
+          </button>
+          <button onClick={() => setView('cart')} className={`flex flex-col items-center gap-1 ${view === 'cart' ? 'text-[#A68966]' : 'text-gray-300'}`}>
+            <ShoppingCart size={22} /><span className="text-[8px] uppercase font-bold tracking-widest">Sacola</span>
+          </button>
+          <button onClick={handleAdminAccess} className={`flex flex-col items-center gap-1 ${view === 'admin' ? 'text-[#A68966]' : 'text-gray-300'}`}>
+            <Package size={22} /><span className="text-[8px] uppercase font-bold tracking-widest">Painel</span>
+          </button>
+        </footer>
+      )}
+
+      {/* ÁREA DE IMPRESSÃO */}
+      <div style={{ position: 'absolute', left: '-10000px', top: 0, opacity: 0 }}>
+        {orders.map(o => <PrintLayout key={o.id} order={o} />)}
+      </div>
+    </div>
+  );
+}
